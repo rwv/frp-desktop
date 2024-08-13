@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest' # Universal macOS
+            args: '--target universal-apple-darwin'
+            artifact_name: 'tauri-macos-dmg-universal'
+            artifact_path: 'src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg'
+            rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+
+          - platform: 'macos-latest' # Arm macOS
+            args: '--target aarch64-apple-darwin'
+            artifact_name: 'tauri-macos-dmg-aarch64'
+            artifact_path: 'src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg'
+            rust_targets: 'aarch64-apple-darwin'
+
+          - platform: 'macos-latest' # Intel macOS
+            args: '--target x86_64-apple-darwin'
+            artifact_name: 'tauri-macos-dmg-x86_64'
+            artifact_path: 'src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg'
+            rust_targets: 'x86_64-apple-darwin'
+
+          - platform: 'windows-latest' # x64 Windows
+            args: '--target x86_64-pc-windows-msvc --bundles nsis'
+            artifact_name: 'tauri-windows-nsis-x86_64'
+            artifact_path: 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe'
+            rust_targets: 'x86_64-pc-windows-msvc'
+
+          - platform: 'windows-latest' # x86 Windows
+            args: '--target i686-pc-windows-msvc --bundles nsis'
+            artifact_name: 'tauri-windows-nsis-i686'
+            artifact_path: 'src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe'
+            rust_targets: 'x86_64-pc-windows-msvc,i686-pc-windows-msvc'
+
+          - platform: 'windows-latest' # ARM64 Windows
+            args: '--target aarch64-pc-windows-msvc --bundles nsis'
+            artifact_name: 'tauri-windows-nsis-aarch64'
+            artifact_path: 'src-tauri/target/aarch64-pc-windows-msvc/release/bundle/nsis/*.exe'
+            rust_targets: 'x86_64-pc-windows-msvc,aarch64-pc-windows-msvc,i686-pc-windows-msvc'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Javascript Lint Check
+        run: pnpm run lint-check
+
+      - name: Javascript Format Check
+        run: pnpm run format-check
+
+      - name: Rust Lint Check
+        run: pnpm run lint-rust-check
+
+      - name: Rust Format Check
+        run: pnpm run format-rust-check
+
+      - name: Build Tauri for release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Upload to Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          compression-level: 0
